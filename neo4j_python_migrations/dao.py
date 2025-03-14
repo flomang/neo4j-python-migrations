@@ -177,3 +177,75 @@ class MigrationDAO:
                 migration_target=self.database,
             )
             return [Migration.from_dict(row.data()["m"]) for row in query_result]
+            
+    def remove_migration(self, version: str) -> None:
+        """
+        Remove a migration record from the database during rollback.
+        
+        This method detaches the migration node from the chain and deletes it.
+        It also reconnects the previous migration node with the next one (if exists).
+        
+        :param version: The version of the migration to remove.
+        :raises ValueError: If the migration could not be removed.
+        """
+        with self.driver.session(database=self.schema_database) as session:
+            with session.begin_transaction() as tx:
+                # Get the migration node, its predecessor, and its successor (if any)
+                query_result = tx.run(
+                    """
+                    MATCH (prev:__Neo4jMigration)-[r1:MIGRATED_TO]->(m:__Neo4jMigration {version: $version})
+                    WHERE
+                        coalesce(m.project,'<default>') = coalesce($project,'<default>')
+                        AND coalesce(m.migrationTarget,'<default>') = coalesce($migration_target,'<default>')
+                    OPTIONAL MATCH (m)-[r2:MIGRATED_TO]->(next:__Neo4jMigration)
+                    RETURN prev, m, next, r1, r2
+                    """,
+                    version=version,
+                    project=self.project,
+                    migration_target=self.database,
+                )
+                
+                result = query_result.single()
+                if not result:
+                    raise ValueError(f"Migration version {version} not found.")
+                
+                # If there's a next migration, create a new relationship from prev to next
+                if result.get("next"):
+                    tx.run(
+                        """
+                        MATCH (prev:__Neo4jMigration)-[:MIGRATED_TO]->(m:__Neo4jMigration {version: $version})-[:MIGRATED_TO]->(next:__Neo4jMigration)
+                        WHERE
+                            coalesce(m.project,'<default>') = coalesce($project,'<default>')
+                            AND coalesce(m.migrationTarget,'<default>') = coalesce($migration_target,'<default>')
+                        MERGE (prev)-[new_link:MIGRATED_TO]->(next)
+                        SET
+                            new_link.at = datetime(),
+                            new_link.by = $rolled_back_by,
+                            new_link.connectedAs = $connected_as
+                        """,
+                        version=version,
+                        project=self.project,
+                        migration_target=self.database,
+                        rolled_back_by=getuser(),
+                        connected_as=self.user,
+                    )
+                
+                # Delete the migration node and its relationships
+                delete_result = tx.run(
+                    """
+                    MATCH (prev:__Neo4jMigration)-[r1:MIGRATED_TO]->(m:__Neo4jMigration {version: $version})
+                    WHERE
+                        coalesce(m.project,'<default>') = coalesce($project,'<default>')
+                        AND coalesce(m.migrationTarget,'<default>') = coalesce($migration_target,'<default>')
+                    OPTIONAL MATCH (m)-[r2:MIGRATED_TO]->(next:__Neo4jMigration)
+                    DELETE r1, r2, m
+                    RETURN count(m) as deleted_count
+                    """,
+                    version=version,
+                    project=self.project,
+                    migration_target=self.database,
+                )
+                
+                summary = delete_result.single()
+                if not summary or summary["deleted_count"] != 1:
+                    raise ValueError(f"Failed to remove migration version {version}.")

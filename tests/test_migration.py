@@ -138,3 +138,116 @@ def test_exception_if_apply_method_is_not_implemented() -> None:
 
     with pytest.raises(NotImplementedError):
         migration.apply(Mock())
+
+
+def test_exception_if_rollback_method_is_not_implemented() -> None:
+    migration = Migration(version="0001", description="initial", type="CYPHER")
+
+    with pytest.raises(NotImplementedError):
+        migration.rollback(Mock())
+
+
+def test_rollback_python_migration() -> None:
+    code = Mock()
+    rollback_code = Mock()
+    migration = PythonMigration(
+        version="0001",
+        description="1234",
+        code=code,
+        rollback_code=rollback_code,
+    )
+
+    session = MagicMock()
+    migration.rollback(session)
+
+    rollback_code.assert_called_with(session)
+
+
+def test_exception_if_python_rollback_not_implemented() -> None:
+    code = Mock()
+    migration = PythonMigration(
+        version="0001",
+        description="1234",
+        code=code,
+        # No rollback_code provided
+    )
+
+    with pytest.raises(NotImplementedError):
+        migration.rollback(Mock())
+
+
+@pytest.mark.parametrize(
+    "query, expected_forward_statements, expected_down_statements",
+    [
+        # Case 1: No sections - treat all as forward
+        (
+            "MATCH (n) RETURN count(n) AS n;\nMATCH (m) RETURN count(m) AS m;",
+            ["MATCH (n) RETURN count(n) AS n", "MATCH (m) RETURN count(m) AS m"],
+            [],
+        ),
+        # Case 2: With FORWARD and DOWN sections
+        (
+            "// FORWARD\nCREATE (n:Test);\nMATCH (n:Test) RETURN n;\n// DOWN\nMATCH (n:Test) DELETE n;",
+            ["CREATE (n:Test)", "MATCH (n:Test) RETURN n"],
+            ["MATCH (n:Test) DELETE n"],
+        ),
+        # Case 3: With empty DOWN section
+        (
+            "// FORWARD\nCREATE (n:Test);\n// DOWN",
+            ["CREATE (n:Test)"],
+            [],
+        ),
+        # Case 4: With multiple statements in both sections
+        (
+            "// FORWARD\nCREATE (n:Test);\nCREATE (m:Test2);\n// DOWN\nMATCH (n:Test) DELETE n;\nMATCH (m:Test2) DELETE m;",
+            ["CREATE (n:Test)", "CREATE (m:Test2)"],
+            ["MATCH (n:Test) DELETE n", "MATCH (m:Test2) DELETE m"],
+        ),
+    ],
+)
+def test_parse_sections_in_cypher_migration(
+    query: str,
+    expected_forward_statements: List[str],
+    expected_down_statements: List[str],
+) -> None:
+    migration = CypherMigration(
+        version="0001",
+        description="1234",
+        query=query,
+    )
+
+    assert migration.statements == expected_forward_statements
+    assert migration.rollback_statements == expected_down_statements
+
+
+def test_apply_and_rollback_cypher_migration() -> None:
+    migration = CypherMigration(
+        version="0001",
+        description="1234",
+        query="// FORWARD\nSTATEMENT1;STATEMENT2;\n// DOWN\nROLLBACK1;ROLLBACK2;",
+    )
+
+    # Test apply
+    session = MagicMock()
+    migration.apply(session)
+
+    assert call.run("STATEMENT1") in session.mock_calls
+    assert call.run("STATEMENT2") in session.mock_calls
+    session.reset_mock()
+    
+    # Test rollback
+    migration.rollback(session)
+    
+    assert call.run("ROLLBACK1") in session.mock_calls
+    assert call.run("ROLLBACK2") in session.mock_calls
+
+
+def test_exception_if_cypher_rollback_not_implemented() -> None:
+    migration = CypherMigration(
+        version="0001",
+        description="1234",
+        query="STATEMENT1;STATEMENT2;",  # No DOWN section
+    )
+
+    with pytest.raises(NotImplementedError):
+        migration.rollback(Mock())

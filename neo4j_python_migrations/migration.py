@@ -1,6 +1,7 @@
 import binascii
+import re
 from enum import Enum
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from attr import asdict, define, field
 from neo4j import Transaction
@@ -24,6 +25,7 @@ class Migration:
     type: str
     source: Optional[str] = None
     checksum: Optional[str] = None
+    rollback_checksum: Optional[str] = None
 
     @classmethod
     def from_dict(cls, properties: Dict[str, Any]) -> "Migration":
@@ -59,6 +61,15 @@ class Migration:
         :raises NotImplementedError: if not implemented.
         """
         raise NotImplementedError()
+        
+    def rollback(self, tx: Transaction) -> None:
+        """
+        Rollback migration from the database.
+        
+        :param tx: neo4j transaction.
+        :raises NotImplementedError: if not implemented.
+        """
+        raise NotImplementedError()
 
     def __attrs_post_init__(self) -> None:
         self.parsed_version = Version(self.version)  # noqa: WPS601
@@ -72,10 +83,16 @@ class PythonMigration(Migration):
     """Migration based on a python code."""
 
     code: Callable[[Transaction], None]
+    rollback_code: Optional[Callable[[Transaction], None]] = None
     type: str = field(default=MigrationType.PYTHON, init=False)
 
     def apply(self, tx: Transaction) -> None:  # noqa: D102
         self.code(tx)
+        
+    def rollback(self, tx: Transaction) -> None:  # noqa: D102
+        if self.rollback_code is None:
+            raise NotImplementedError(f"Rollback not implemented for migration V{self.version}")
+        self.rollback_code(tx)
 
 
 @define
@@ -85,16 +102,27 @@ class CypherMigration(Migration):
     query: str = field(repr=False)
     type: str = field(default=MigrationType.CYPHER, init=False)
     statements: List[str] = field(init=False, repr=False)
+    rollback_statements: List[str] = field(init=False, repr=False, default=[])
 
     def __attrs_post_init__(self) -> None:
         super().__attrs_post_init__()
+        forward_statements, down_statements = self._parse_statements(self.query)
+        
         self.statements = list(  # noqa: WPS601
             filter(
                 lambda statement: statement,
-                [statement.strip() for statement in self.query.split(";")[:-1]],
+                [statement.strip() for statement in forward_statements],
+            ),
+        )
+        
+        self.rollback_statements = list(
+            filter(
+                lambda statement: statement,
+                [statement.strip() for statement in down_statements],
             ),
         )
 
+        # Calculate checksum for forward statements
         checksum = None
         for st in self.statements:
             binary_statement = st.encode()
@@ -104,8 +132,58 @@ class CypherMigration(Migration):
                 else binascii.crc32(binary_statement)
             )
 
-        self.checksum = str(checksum)
+        self.checksum = str(checksum) if checksum else None
+        
+        # Calculate checksum for rollback statements
+        rollback_checksum = None
+        for st in self.rollback_statements:
+            binary_statement = st.encode()
+            rollback_checksum = (
+                binascii.crc32(binary_statement, rollback_checksum)  # type: ignore
+                if rollback_checksum
+                else binascii.crc32(binary_statement)
+            )
+
+        self.rollback_checksum = str(rollback_checksum) if rollback_checksum else None
+        
+    def _parse_statements(self, query: str) -> Tuple[List[str], List[str]]:
+        """
+        Parse the query into forward and down statements.
+        
+        :param query: The full query string.
+        :return: A tuple of (forward_statements, down_statements).
+        """
+        if '// FORWARD' not in query and '// DOWN' not in query:
+            # If no sections are defined, treat the entire script as forward migration
+            return (query.split(";")[:-1], [])
+            
+        # Split the query into sections
+        forward_pattern = re.compile(r'// FORWARD\s*(.*?)(?=// DOWN|$)', re.DOTALL)
+        down_pattern = re.compile(r'// DOWN\s*(.*?)(?=$)', re.DOTALL)
+        
+        forward_match = forward_pattern.search(query)
+        down_match = down_pattern.search(query)
+        
+        forward_content = forward_match.group(1).strip() if forward_match else ""
+        down_content = down_match.group(1).strip() if down_match else ""
+        
+        forward_statements = forward_content.split(";") if forward_content else []
+        if forward_statements and forward_statements[-1].strip() == "":
+            forward_statements = forward_statements[:-1]
+            
+        down_statements = down_content.split(";") if down_content else []
+        if down_statements and down_statements[-1].strip() == "":
+            down_statements = down_statements[:-1]
+        
+        return (forward_statements, down_statements)
 
     def apply(self, tx: Transaction) -> None:  # noqa: D102
         for statement in self.statements:
+            tx.run(statement)
+            
+    def rollback(self, tx: Transaction) -> None:  # noqa: D102
+        if not self.rollback_statements:
+            raise NotImplementedError(f"Rollback not implemented for migration V{self.version}")
+        
+        for statement in self.rollback_statements:
             tx.run(statement)

@@ -54,3 +54,37 @@ def test_migrate(driver: MagicMock) -> None:
 
         assert result.exit_code == 0
         executor_mock.assert_called()
+
+
+@patch("neo4j.GraphDatabase.driver")
+def test_rollback_default(driver: MagicMock) -> None:
+    with patch("neo4j_python_migrations.executor.Executor.rollback") as executor_mock:
+        result = runner.invoke(cli, ["--path", ".", "--password", "test", "rollback"])
+
+        assert result.exit_code == 0
+        # We can't directly assert the lambda function equality, so just check it was called with version=None
+        assert executor_mock.call_args[1]["version"] is None
+        assert "on_rollback" in executor_mock.call_args[1]
+
+
+@patch("neo4j.GraphDatabase.driver")
+def test_rollback_to_specific_version(driver: MagicMock) -> None:
+    with patch("neo4j_python_migrations.executor.Executor.rollback") as executor_mock:
+        # The version is a positional argument, not an option
+        result = runner.invoke(cli, ["--path", ".", "--password", "test", "rollback", "0001"])
+
+        assert result.exit_code == 0
+        # Check version was passed correctly
+        assert executor_mock.call_args[1]["version"] == "0001"
+        assert "on_rollback" in executor_mock.call_args[1]
+
+
+@patch("neo4j.GraphDatabase.driver")
+def test_rollback_error_handling(driver: MagicMock) -> None:
+    with patch("neo4j_python_migrations.executor.Executor.rollback") as executor_mock:
+        executor_mock.side_effect = ValueError("Test rollback error")
+        result = runner.invoke(cli, ["--path", ".", "--password", "test", "rollback"])
+
+        # CLI returns exit code 1 on error
+        assert result.exit_code == 1
+        assert "Test rollback error" in result.stdout

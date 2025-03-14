@@ -80,6 +80,78 @@ class Executor:
                         on_apply(migration)  # noqa: WPS220
 
                 self.dao.add_migration(migration, duration)
+                
+    def rollback(  # noqa: WPS210
+        self,
+        version: Optional[str] = None,
+        on_rollback: Optional[Callable[[Migration], None]] = None,
+    ) -> None:
+        """
+        Rollback the most recent migration or up to a specific version.
+
+        :param version: specific version to rollback to (inclusive).
+                        If None, only the most recent migration is rolled back.
+        :param on_rollback: callback that is called when each migration is rolled back.
+        :raises ValueError: if errors were found during migration verification or if
+                          no migrations to rollback.
+        """
+        # Get applied migrations
+        applied_migrations = self.dao.get_applied_migrations()
+        
+        if not applied_migrations:
+            raise ValueError("No migrations found to rollback.")
+        
+        # Determine which migrations to rollback
+        migrations_to_rollback = []
+        
+        if version is None:
+            # Rollback only the most recent migration
+            migrations_to_rollback = [applied_migrations[-1]]
+        else:
+            # Find the index of the specified version
+            version_index = None
+            for i, migration in enumerate(applied_migrations):
+                if migration.version == version:
+                    version_index = i
+                    break
+            
+            if version_index is None:
+                raise ValueError(f"Migration version {version} not found in applied migrations.")
+            
+            # Collect all migrations that need to be rolled back (in reverse order)
+            migrations_to_rollback = list(reversed(applied_migrations[version_index + 1:]))
+        
+        # Rollback migrations in reverse order (newest first)
+        for migration in migrations_to_rollback:
+            # Find the local migration to get rollback information
+            local_migration = next(
+                (m for m in self.local_migrations if m.version == migration.version),
+                None,
+            )
+            
+            if local_migration is None:
+                raise ValueError(
+                    f"Local migration V{migration.version} not found. "
+                    "Cannot perform rollback without local migration file.",
+                )
+            
+            # Perform the rollback
+            with self.driver.session(database=self.database) as session:
+                with session.begin_transaction() as tx:
+                    start_time = time.monotonic()
+                    try:
+                        local_migration.rollback(tx)
+                        duration = time.monotonic() - start_time
+                        
+                        if on_rollback:
+                            on_rollback(local_migration)
+                            
+                        # Remove the migration from the database
+                        self.dao.remove_migration(migration.version)
+                    except NotImplementedError as e:
+                        raise ValueError(
+                            f"Migration V{migration.version} does not support rollback: {str(e)}",
+                        )
 
     def analyze(self) -> analyzer.AnalyzingResult:
         """

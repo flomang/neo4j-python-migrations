@@ -69,10 +69,15 @@ def _load_python_migration(
     spec = spec_from_file_location(migration_file.stem, migration_file)
     module = module_from_spec(spec)  # type: ignore
     spec.loader.exec_module(module)  # type: ignore
+    
+    # Check if the module has a down function for rollback
+    rollback_code = getattr(module, 'down', None)
+    
     return PythonMigration(
         version=version,
         description=description,
         code=module.up,
+        rollback_code=rollback_code,
         source=migration_file.name,
     )
 

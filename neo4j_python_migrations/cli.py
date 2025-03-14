@@ -4,7 +4,7 @@ from typing import Optional
 
 from attr import define
 from neo4j import GraphDatabase
-from typer import Exit, Option, Typer
+from typer import Exit, Option, Typer, Argument
 from yarl import URL
 
 from neo4j_python_migrations.executor import Executor
@@ -52,6 +52,41 @@ def migrate() -> None:  # noqa: D103
                 f"Migration V{migration.version} ({migration.description}) APPLIED",
             ),
         )
+
+
+@cli.command(help="Rollback migrations either to a specific version or the most recent one.")
+def rollback(
+    version: Optional[str] = Argument(
+        None,
+        help="The version to rollback to (inclusive). If not specified, only the most recent migration is rolled back.",
+    ),
+) -> None:  # noqa: D103
+    if not state:
+        raise Exit(2)
+
+    with GraphDatabase.driver(
+        str(URL.build(scheme=state.scheme, host=state.host, port=state.port)),
+        auth=(state.username, state.password),
+    ) as driver:
+        executor = Executor(
+            driver=driver,
+            migrations_path=Path(state.path),
+            project=state.project,
+            database=state.database,
+            schema_database=state.schema_database,
+        )
+        try:
+            executor.rollback(
+                version=version,
+                on_rollback=lambda migration: print(
+                    f"{datetime.now()} "
+                    f"Migration V{migration.version} ({migration.description}) ROLLED BACK",
+                ),
+            )
+            print("Rollback completed successfully.")
+        except ValueError as e:
+            print(f"Error during rollback: {str(e)}")
+            raise Exit(1)
 
 
 @cli.command(
