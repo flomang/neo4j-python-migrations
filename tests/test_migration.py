@@ -187,19 +187,19 @@ def test_exception_if_python_rollback_not_implemented() -> None:
         ),
         # Case 2: With FORWARD and DOWN sections
         (
-            "// FORWARD\nCREATE (n:Test);\nMATCH (n:Test) RETURN n;\n// DOWN\nMATCH (n:Test) DELETE n;",
+            "↑UP-MIGRATION\nCREATE (n:Test);\nMATCH (n:Test) RETURN n;\n// ↓DOWN-MIGRATION\nMATCH (n:Test) DELETE n;",
             ["CREATE (n:Test)", "MATCH (n:Test) RETURN n"],
             ["MATCH (n:Test) DELETE n"],
         ),
         # Case 3: With empty DOWN section
         (
-            "// FORWARD\nCREATE (n:Test);\n// DOWN",
+            "↑UP-MIGRATION\nCREATE (n:Test);\n// ↓DOWN-MIGRATION",
             ["CREATE (n:Test)"],
             [],
         ),
         # Case 4: With multiple statements in both sections
         (
-            "// FORWARD\nCREATE (n:Test);\nCREATE (m:Test2);\n// DOWN\nMATCH (n:Test) DELETE n;\nMATCH (m:Test2) DELETE m;",
+            "↑UP-MIGRATION\nCREATE (n:Test);\nCREATE (m:Test2);\n// ↓DOWN-MIGRATION\nMATCH (n:Test) DELETE n;\nMATCH (m:Test2) DELETE m;",
             ["CREATE (n:Test)", "CREATE (m:Test2)"],
             ["MATCH (n:Test) DELETE n", "MATCH (m:Test2) DELETE m"],
         ),
@@ -224,7 +224,7 @@ def test_apply_and_rollback_cypher_migration() -> None:
     migration = CypherMigration(
         version="0001",
         description="1234",
-        query="// FORWARD\nSTATEMENT1;STATEMENT2;\n// DOWN\nROLLBACK1;ROLLBACK2;",
+        query="↑UP-MIGRATION\nSTATEMENT1;STATEMENT2;\n// ↓DOWN-MIGRATION\nROLLBACK1;ROLLBACK2;",
     )
 
     # Test apply

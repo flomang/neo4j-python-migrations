@@ -153,13 +153,13 @@ class CypherMigration(Migration):
         :param query: The full query string.
         :return: A tuple of (forward_statements, down_statements).
         """
-        if '// FORWARD' not in query and '// DOWN' not in query:
+        if '↑UP-MIGRATION' not in query and '// ↓DOWN-MIGRATION' not in query:
             # If no sections are defined, treat the entire script as forward migration
             return (query.split(";")[:-1], [])
             
         # Split the query into sections
-        forward_pattern = re.compile(r'// FORWARD\s*(.*?)(?=// DOWN|$)', re.DOTALL)
-        down_pattern = re.compile(r'// DOWN\s*(.*?)(?=$)', re.DOTALL)
+        forward_pattern = re.compile(r'↑UP-MIGRATION\s*(.*?)(?=// ↓DOWN-MIGRATION|$)', re.DOTALL)
+        down_pattern = re.compile(r'// ↓DOWN-MIGRATION\s*(.*?)(?=$)', re.DOTALL)
         
         forward_match = forward_pattern.search(query)
         down_match = down_pattern.search(query)
