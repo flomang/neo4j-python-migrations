@@ -172,6 +172,54 @@ class Executor:
                             f"Migration V{migration.version} does not support rollback: {str(e)}",
                         )
 
+    def reset_all(self, on_rollback: Optional[Callable[[Migration], None]] = None) -> None:
+        """
+        Rollback all migrations completely, resetting the database to its pre-migration state.
+
+        :param on_rollback: callback that is called when each migration is rolled back.
+        :raises ValueError: if errors are found during migration verification or if
+                          no migrations to rollback.
+        """
+        # Get applied migrations
+        applied_migrations = self.dao.get_applied_migrations()
+        
+        if not applied_migrations:
+            raise ValueError("No migrations found to reset.")
+        
+        # Rollback all migrations in reverse order (newest first)
+        migrations_to_rollback = list(reversed(applied_migrations))
+        
+        for migration in migrations_to_rollback:
+            # Find the local migration to get rollback information
+            local_migration = next(
+                (m for m in self.local_migrations if m.version == migration.version),
+                None,
+            )
+            
+            if local_migration is None:
+                raise ValueError(
+                    f"Local migration V{migration.version} not found. "
+                    "Cannot perform rollback without local migration file.",
+                )
+            
+            # Perform the rollback
+            with self.driver.session(database=self.database) as session:
+                with session.begin_transaction() as tx:
+                    start_time = time.monotonic()
+                    try:
+                        local_migration.rollback(tx)
+                        duration = time.monotonic() - start_time
+                        
+                        if on_rollback:
+                            on_rollback(local_migration)
+                            
+                        # Remove the migration from the database
+                        self.dao.remove_migration(migration.version)
+                    except NotImplementedError as e:
+                        raise ValueError(
+                            f"Migration V{migration.version} does not support rollback: {str(e)}",
+                        )
+
     def analyze(self) -> analyzer.AnalyzingResult:
         """
         Analyze local and remote migrations.

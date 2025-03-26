@@ -113,3 +113,25 @@ def test_rollback_error_handling(driver: MagicMock) -> None:
         # CLI returns exit code 1 on error
         assert result.exit_code == 1
         assert "Test rollback error" in result.stdout
+
+
+@patch("neo4j.GraphDatabase.driver")
+def test_reset_default(driver: MagicMock) -> None:
+    with patch("neo4j_python_migrations.executor.Executor.reset_all") as executor_mock:
+        result = runner.invoke(cli, ["--path", ".", "--password", "test", "reset"])
+
+        assert result.exit_code == 0
+        # Check that reset_all was called with on_rollback parameter
+        assert "on_rollback" in executor_mock.call_args[1]
+        assert "Full reset completed successfully" in result.stdout
+
+
+@patch("neo4j.GraphDatabase.driver")
+def test_reset_error_handling(driver: MagicMock) -> None:
+    with patch("neo4j_python_migrations.executor.Executor.reset_all") as executor_mock:
+        executor_mock.side_effect = ValueError("Test reset error")
+        result = runner.invoke(cli, ["--path", ".", "--password", "test", "reset"])
+
+        # CLI returns exit code 1 on error
+        assert result.exit_code == 1
+        assert "Error during reset: Test reset error" in result.stdout

@@ -100,6 +100,35 @@ def rollback(
             raise Exit(1)
 
 
+@cli.command(help="Rollback all migrations completely, resetting the database to its pre-migration state.")
+def reset() -> None:  # noqa: D103
+    if not state:
+        raise Exit(2)
+
+    with GraphDatabase.driver(
+        str(URL.build(scheme=state.scheme, host=state.host, port=state.port)),
+        auth=(state.username, state.password),
+    ) as driver:
+        executor = Executor(
+            driver=driver,
+            migrations_path=Path(state.path),
+            project=state.project,
+            database=state.database,
+            schema_database=state.schema_database,
+        )
+        try:
+            executor.reset_all(
+                on_rollback=lambda migration: print(
+                    f"{datetime.now()} "
+                    f"Migration V{migration.version} ({migration.description}) ROLLED BACK",
+                ),
+            )
+            print("Full reset completed successfully.")
+        except ValueError as e:
+            print(f"Error during reset: {str(e)}")
+            raise Exit(1)
+
+
 @cli.command(
     help="Analyze migrations, find pending and missed.",
 )
