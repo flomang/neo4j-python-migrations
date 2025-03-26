@@ -169,8 +169,10 @@ class MigrationDAO:
                         = coalesce($project,'<default>')
                     AND coalesce(m.migrationTarget,'<default>')
                         = coalesce($migration_target,'<default>')
+                WITH m,
+                    [x IN split(m.version, '.') | toInteger(x)] AS version
                 RETURN m
-                ORDER BY m.version
+                ORDER BY version
                 """,
                 baseline=self.baseline,
                 project=self.project,
