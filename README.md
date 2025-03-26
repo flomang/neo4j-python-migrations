@@ -49,6 +49,20 @@ CREATE INDEX author_uuid_index IF NOT EXISTS FOR (a:AUTHOR) ON (a.uuid);
 This script will be executed within a single transaction.
 Therefore, if you need both DDL and DML commands, split them into different files.
 
+For rollback support, you can include both forward and rollback migrations in the same file using the following format:
+
+```
+↑UP-MIGRATION
+CREATE CONSTRAINT UniqueAuthor IF NOT EXISTS ON (a:AUTHOR) ASSERT a.uuid IS UNIQUE;
+CREATE INDEX author_uuid_index IF NOT EXISTS FOR (a:AUTHOR) ON (a.uuid);
+
+// ↓DOWN-MIGRATION
+DROP INDEX author_uuid_index IF EXISTS;
+DROP CONSTRAINT UniqueAuthor IF EXISTS;
+```
+
+The `↑UP-MIGRATION` section is applied during migration, while the `// ↓DOWN-MIGRATION` section is used for rollback operations.
+
 ### Python
 Python-based migrations should have a special format, for example `./migrations/V0002__drop_index.py`:
 ```
@@ -58,7 +72,13 @@ from neo4j import Transaction
 # This function must be present
 def up(tx: Transaction):
     tx.run("DROP INDEX author_uuid_index")
+    
+# Optional - implemented for rollback support
+def down(tx: Transaction):
+    tx.run("CREATE INDEX author_uuid_index IF NOT EXISTS FOR (a:AUTHOR) ON (a.uuid)")
 ```
+
+The `up` function is required and runs during migration. The optional `down` function is used for rollback operations.
 
 ## Applying migrations
 ### CLI
@@ -102,13 +122,31 @@ Options:
   --help                          Show this message and exit.
 
 Commands:
-  analyze  Analyze migrations, find pending and missed.
-  migrate  Retrieves all pending migrations, verify and applies them.
+  analyze   Analyze migrations, find pending and missed.
+  migrate   Retrieves all pending migrations, verify and applies them.
+  rollback  Rollback the most recent migration or up to a specific version.
+  reset     Rollback all migrations, resetting the database to its pre-migration state.
 ```
 
 So, to apply migrations, just run the command:
 
 `python3 -m neo4j_python_migrations --username neo4j --password test --path ./migrations migrate`
+
+If you want to migrate up to a specific version (inclusive), you can use:
+
+`python3 -m neo4j_python_migrations --username neo4j --password test --path ./migrations migrate --version 0002`
+
+To rollback the most recent migration:
+
+`python3 -m neo4j_python_migrations --username neo4j --password test --path ./migrations rollback`
+
+To rollback to a specific version:
+
+`python3 -m neo4j_python_migrations --username neo4j --password test --path ./migrations rollback --version 0001`
+
+To reset all migrations, completely reverting the database to its pre-migration state:
+
+`python3 -m neo4j_python_migrations --username neo4j --password test --path ./migrations reset`
 
 _Note: it is more secure to store the password in the environment variable NEO4J_MIGRATIONS_PASS._
 
@@ -126,7 +164,9 @@ with GraphDatabase.driver("neo4j://localhost:7687", auth=("neo4j", "test")) as d
     executor = Executor(driver, migrations_path=Path("./migrations"))
     executor.migrate()
 ```
-Available methods: `migrate`, `analyze`. 
+Available methods: `migrate`, `analyze`, `rollback`, `reset_all`. 
+
+The `migrate` method accepts an optional `version` parameter to migrate up to a specific version. The `rollback` method also accepts an optional `version` parameter to roll back to a specific version.
 
 # How migrations are tracked
 Information about the applied migrations is stored in the database using the schema
