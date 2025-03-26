@@ -149,3 +149,57 @@ def test_no_matching_files(fs: FakeFilesystem) -> None:
         fs.create_file(file_path)
 
     assert not loader.load(migrations_path.parent)
+
+
+def test_load_python_migration_with_rollback() -> None:
+    with tempfile.TemporaryDirectory() as tempdir:
+        file_path = Path(tempdir).joinpath("V0001__migration_with_rollback.py")
+        with open(file_path, "w") as tmpfile:
+            tmpfile.write(
+                "def up(session): \n"
+                "    session.apply()\n"
+                "\n"
+                "def down(session): \n"
+                "    session.rollback()"
+            )
+
+        migrations = loader.load(file_path.parent)
+
+    session = Mock()
+    
+    # Test apply
+    migrations[0].code(session)  # type: ignore
+    session.apply.assert_called_once()
+    
+    # Test rollback
+    migrations[0].rollback(session)  # type: ignore
+    session.rollback.assert_called_once()
+    
+    assert len(migrations) == 1
+    assert isinstance(migrations[0], PythonMigration)
+    assert migrations[0].rollback_code is not None
+
+
+def test_cypher_migration_with_up_down_sections(fs: FakeFilesystem) -> None:
+    migration_content = """
+    // ↑UP-MIGRATION
+    CREATE (n:Test {name: 'test'});
+    CREATE INDEX test_idx FOR (n:Test) ON (n.name);
+    
+    // ↓DOWN-MIGRATION
+    DROP INDEX test_idx;
+    MATCH (n:Test) DELETE n;
+    """
+    
+    file_path = Path("./migrations/V0001__test_with_sections.cypher")
+    fs.create_file(file_path, contents=migration_content)
+    
+    migrations = loader.load(file_path.parent)
+    
+    assert len(migrations) == 1
+    migration = migrations[0]
+    assert isinstance(migration, CypherMigration)
+    assert len(migration.statements) == 2
+    assert len(migration.rollback_statements) == 2
+    assert "CREATE (n:Test {name: 'test'})" in migration.statements[0]
+    assert "DROP INDEX test_idx" in migration.rollback_statements[0]

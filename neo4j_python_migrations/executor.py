@@ -48,11 +48,14 @@ class Executor:
 
     def migrate(  # noqa: WPS210
         self,
+        version: Optional[str] = None,
         on_apply: Optional[Callable[[Migration], None]] = None,
     ) -> None:
         """
         Retrieves all pending migrations, verify and applies them.
 
+        :param version: specific version to migrate to (inclusive).
+                       If None, all pending migrations are applied.
         :param on_apply: callback that is called when each migration is applied.
         :raises ValueError: if errors were found during migration verification.
         """
@@ -67,7 +70,23 @@ class Executor:
             self.dao.create_baseline()
             self.dao.create_constraints()
 
-        for migration in analyzing_result.pending_migrations:
+        # If version is specified, filter pending migrations up to that version (inclusive)
+        migrations_to_apply = analyzing_result.pending_migrations
+        if version is not None:
+            # Find the index of the specified version in pending migrations
+            version_index = None
+            for i, migration in enumerate(migrations_to_apply):
+                if migration.version == version:
+                    version_index = i
+                    break
+            
+            if version_index is None:
+                raise ValueError(f"Migration version {version} not found in pending migrations.")
+            
+            # Apply migrations only up to the specified version (inclusive)
+            migrations_to_apply = migrations_to_apply[:version_index + 1]
+        
+        for migration in migrations_to_apply:
             self.dao.add_migration(migration, 0, dry_run=True)
 
             with self.driver.session(database=self.database) as session:

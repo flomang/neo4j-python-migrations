@@ -48,12 +48,37 @@ def test_analyze_when_there_are_invalid_versions(driver: MagicMock) -> None:
 
 
 @patch("neo4j.GraphDatabase.driver")
-def test_migrate(driver: MagicMock) -> None:
+def test_migrate_default(driver: MagicMock) -> None:
     with patch("neo4j_python_migrations.executor.Executor.migrate") as executor_mock:
         result = runner.invoke(cli, ["--path", ".", "--password", "test", "migrate"])
 
         assert result.exit_code == 0
-        executor_mock.assert_called()
+        # Should be called with version=None
+        assert executor_mock.call_args[1]["version"] is None
+        assert "on_apply" in executor_mock.call_args[1]
+
+
+@patch("neo4j.GraphDatabase.driver")
+def test_migrate_to_specific_version(driver: MagicMock) -> None:
+    with patch("neo4j_python_migrations.executor.Executor.migrate") as executor_mock:
+        # The version is a positional argument, not an option
+        result = runner.invoke(cli, ["--path", ".", "--password", "test", "migrate", "0001"])
+
+        assert result.exit_code == 0
+        # Check version was passed correctly
+        assert executor_mock.call_args[1]["version"] == "0001"
+        assert "on_apply" in executor_mock.call_args[1]
+
+
+@patch("neo4j.GraphDatabase.driver")
+def test_migrate_error_handling(driver: MagicMock) -> None:
+    with patch("neo4j_python_migrations.executor.Executor.migrate") as executor_mock:
+        executor_mock.side_effect = ValueError("Test migration error")
+        result = runner.invoke(cli, ["--path", ".", "--password", "test", "migrate"])
+
+        # CLI returns exit code 1 on error
+        assert result.exit_code == 1
+        assert "Test migration error" in result.stdout
 
 
 @patch("neo4j.GraphDatabase.driver")

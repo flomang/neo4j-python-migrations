@@ -31,7 +31,12 @@ state: Optional[State] = None
 
 
 @cli.command(help="Retrieves all pending migrations, verify and applies them.")
-def migrate() -> None:  # noqa: D103
+def migrate(
+    version: Optional[str] = Argument(
+        None,
+        help="The version to migrate to (inclusive). If not specified, all pending migrations are applied.",
+    ),
+) -> None:  # noqa: D103
     if not state:
         raise Exit(2)
 
@@ -46,12 +51,18 @@ def migrate() -> None:  # noqa: D103
             database=state.database,
             schema_database=state.schema_database,
         )
-        executor.migrate(
-            on_apply=lambda migration: print(
-                f"{datetime.now()} "
-                f"Migration V{migration.version} ({migration.description}) APPLIED",
-            ),
-        )
+        try:
+            executor.migrate(
+                version=version,
+                on_apply=lambda migration: print(
+                    f"{datetime.now()} "
+                    f"Migration V{migration.version} ({migration.description}) APPLIED",
+                ),
+            )
+            print("Migration completed successfully.")
+        except ValueError as e:
+            print(f"Error during migration: {str(e)}")
+            raise Exit(1)
 
 
 @cli.command(help="Rollback migrations either to a specific version or the most recent one.")
